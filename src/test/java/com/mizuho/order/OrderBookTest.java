@@ -106,8 +106,8 @@ class OrderBookTest {
 
         // Assert
         assertEquals(3, orderBook.getOrderBook().size(), "Invalid number of orders");
-        assertEquals(1, orderBook.getOffersLookup().size(), "Invalid number of offers");
-        assertEquals(2, orderBook.getBidsLookup().size(), "Invalid number of bids");
+        assertEquals(1, orderBook.getOfferLevels().size(), "Invalid number of offers");
+        assertEquals(2, orderBook.getBidLevels().size(), "Invalid number of bids");
     }
 
     @Test
@@ -131,8 +131,8 @@ class OrderBookTest {
         orderBook.addOrder(order1);
         orderBook.addOrder(order2);
         assertEquals(2, orderBook.getOrderBook().size());
-        assertEquals(1, orderBook.getBidsLookup().size());
-        assertEquals(1, orderBook.getOffersLookup().size());
+        assertEquals(1, orderBook.getBidLevels().size());
+        assertEquals(1, orderBook.getOfferLevels().size());
 
         // Act
         orderBook.removeOrderById(order1.id());
@@ -140,8 +140,38 @@ class OrderBookTest {
 
         // Assert
         assertTrue(orderBook.getOrderBook().isEmpty(), "Order book should be empty");
-        assertTrue(orderBook.getBidsLookup().isEmpty(), "Bids lookup should be empty");
-        assertTrue(orderBook.getOffersLookup().isEmpty(), "Offers lookup should be empty");
+        assertTrue(orderBook.getBidLevels().isEmpty(), "Bids lookup should be empty");
+        assertTrue(orderBook.getOfferLevels().isEmpty(), "Offers lookup should be empty");
+    }
+
+    @Test
+    void testRemoveOrderById_WhenOrderRemoved_NonRemovedOrdersAreStillPersisted() {
+        // Arrange
+        Order order1 = new Order(1L, 22.3, OrderSides.BID.getOrderSide(), 30);
+        Order order2 = new Order(2L, 20.3, OrderSides.OFFER.getOrderSide(), 5);
+        Order order3 = new Order(3L, 17.5, OrderSides.BID.getOrderSide(), 5);
+        Order order4 = new Order(4L, 10.9, OrderSides.OFFER.getOrderSide(), 5);
+        orderBook.addOrder(order1);
+        orderBook.addOrder(order2);
+        orderBook.addOrder(order3);
+        orderBook.addOrder(order4);
+        assertEquals(4, orderBook.getOrderBook().size());
+        assertEquals(2, orderBook.getBidLevels().size());
+        assertEquals(2, orderBook.getOfferLevels().size());
+
+        // Act
+        orderBook.removeOrderById(order1.id());
+        orderBook.removeOrderById(order2.id());
+
+        // Assert
+        assertEquals(2, orderBook.getOrderBook().size(), "Order book should have exactly 2 entries");
+        assertEquals(1, orderBook.getBidLevels().size(), "Bids lookup should have exactly 1 entry");
+        assertEquals(1, orderBook.getOfferLevels().size(), "Offers lookup should have exactly 1 entry");
+
+        assertTrue(orderBook.getOrderBook().containsKey(order3.id()));
+        assertTrue(orderBook.getOrderBook().containsKey(order4.id()));
+        assertTrue(orderBook.getBidLevels().containsKey(order3.price()));
+        assertTrue(orderBook.getOfferLevels().containsKey(order4.price()));
     }
 
     @Test
@@ -186,7 +216,7 @@ class OrderBookTest {
         // Assert
         Order orderStoredInBook = orderBook.getOrderBook().get(order.id());
         assertEquals(newSize, orderStoredInBook.size());
-        assertEquals(1L, orderBook.getBidsLookup().get(order.price()).iterator().next());
+        assertEquals(1L, orderBook.getBidLevels().get(order.price()).iterator().next());
     }
 
     @Test
@@ -312,6 +342,46 @@ class OrderBookTest {
         assertEquals(lvl3Bid, orderBook.getTotalSizeByLevelAndSide(3, OrderSides.BID.getOrderSide()));
         assertEquals(lvl1Offer, orderBook.getTotalSizeByLevelAndSide(1, OrderSides.OFFER.getOrderSide()));
         assertEquals(lvl2Offer, orderBook.getTotalSizeByLevelAndSide(2, OrderSides.OFFER.getOrderSide()));
+    }
+
+    @Test
+    void testGetTotalSizeByLevelAndSide_WhenThereAreMoreThanOneLevelWithRemovals_TheRightPriceIsReturnedForEachLevel() {
+        // Arrange
+        // lvl 2 bid
+        Order order1= new Order(1L, 22.3, OrderSides.BID.getOrderSide(), 30);
+        // lvl 3 bid
+        Order order2 = new Order(2L, 12.5, OrderSides.BID.getOrderSide(), 4);
+        // lvl 1 bid
+        Order order3 = new Order(3L, 27.8, OrderSides.BID.getOrderSide(), 10);
+        Order order4 = new Order(4L, 27.8, OrderSides.BID.getOrderSide(), 10);
+        Order order5 = new Order(5L, 27.8, OrderSides.BID.getOrderSide(), 10);
+        // lvl 1 offer
+        Order order6 = new Order(6L, 17.1, OrderSides.OFFER.getOrderSide(), 11);
+        // lvl 2 offer
+        Order order7 = new Order(7L, 97.5, OrderSides.OFFER.getOrderSide(), 17);
+
+        orderBook.addOrder(order1);
+        orderBook.addOrder(order2);
+        orderBook.addOrder(order3);
+        orderBook.addOrder(order4);
+        orderBook.addOrder(order5);
+        orderBook.addOrder(order6);
+        orderBook.addOrder(order7);
+        orderBook.removeOrderById(order7.id());
+        orderBook.removeOrderById(order3.id());
+
+        // Act && Assert
+        long lvl1Offer = order6.size();
+        long lvl1Bid = order4.size() + order5.size();
+        long lvl2Bid = order1.size();
+        long lvl3Bid = order2.size();
+        assertEquals(lvl1Bid, orderBook.getTotalSizeByLevelAndSide(1, OrderSides.BID.getOrderSide()));
+        assertEquals(lvl2Bid, orderBook.getTotalSizeByLevelAndSide(2, OrderSides.BID.getOrderSide()));
+        assertEquals(lvl3Bid, orderBook.getTotalSizeByLevelAndSide(3, OrderSides.BID.getOrderSide()));
+        assertEquals(lvl1Offer, orderBook.getTotalSizeByLevelAndSide(1, OrderSides.OFFER.getOrderSide()));
+        IllegalArgumentException iae = assertThrows(IllegalArgumentException.class,
+                () -> orderBook.getTotalSizeByLevelAndSide(2, OrderSides.OFFER.getOrderSide()));
+        assertEquals(String.format("Level %s is out of range", 2), iae.getMessage());
     }
 
     @Test

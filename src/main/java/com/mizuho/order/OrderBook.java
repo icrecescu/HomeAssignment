@@ -18,8 +18,11 @@ import java.util.stream.Collectors;
 public class OrderBook {
 
     private final Map<Long, Order> orderBook = new ConcurrentHashMap<>();
-    private final Map<Double, Set<Long>> bidsLookup = new ConcurrentSkipListMap<>(Comparator.reverseOrder());
-    private final Map<Double, Set<Long>> offersLookup = new ConcurrentSkipListMap<>();
+    private final Map<Double, Set<Long>> bidLevels = new ConcurrentSkipListMap<>(Comparator.reverseOrder());
+    private final Map<Double, Set<Long>> offerLevels = new ConcurrentSkipListMap<>();
+
+    private final Map<Double, Long> bidsSizePerLevel = new ConcurrentSkipListMap<>(Comparator.reverseOrder());
+    private final Map<Double, Long> offersSizePerLevel = new ConcurrentSkipListMap<>();
 
     /**
      * Adds an order to the order book
@@ -32,6 +35,8 @@ public class OrderBook {
         Set<Long> ordersLevel = getOrderLevel(order);
         orderBook.put(order.id(), order);
         ordersLevel.add(order.id());
+        Map<Double, Long> sizePerLevel = order.side() == OrderSides.BID.getOrderSide() ? bidsSizePerLevel : offersSizePerLevel;
+        sizePerLevel.merge(order.price(), order.size(), Long::sum);
     }
 
     private void validateOrder(Order order) {
@@ -69,9 +74,12 @@ public class OrderBook {
         Order order = orderBook.remove(id);
         Set<Long> ordersLevel = getOrderLevel(order);
         ordersLevel.remove(order.id());
+        Map<Double, Long> sizePerLevel = order.side() == OrderSides.BID.getOrderSide() ? bidsSizePerLevel : offersSizePerLevel;
+        sizePerLevel.merge(order.price(), order.size(), (v1, v2) -> v1 - v2);
         //remove level from lookup in case there are no more orders on that level
         if (ordersLevel.isEmpty()) {
             removeLevel(order);
+            sizePerLevel.remove(order.price());
         }
     }
 
@@ -82,12 +90,12 @@ public class OrderBook {
     }
 
     private void removeLevel(Order order) {
-        Map<Double, Set<Long>> orders = order.side() == OrderSides.BID.getOrderSide() ? bidsLookup : offersLookup;
+        Map<Double, Set<Long>> orders = order.side() == OrderSides.BID.getOrderSide() ? bidLevels : offerLevels;
         orders.remove(order.price());
     }
 
     private Set<Long> getOrderLevel(Order order) {
-        Map<Double, Set<Long>> orders = order.side() == OrderSides.BID.getOrderSide() ? bidsLookup : offersLookup;
+        Map<Double, Set<Long>> orders = order.side() == OrderSides.BID.getOrderSide() ? bidLevels : offerLevels;
         return orders.computeIfAbsent(order.price(), k -> new LinkedHashSet<>());
     }
 
@@ -125,7 +133,7 @@ public class OrderBook {
     public double getPriceOfLevelBySide(int level, char side) {
         validateLevelAndSide(level, side);
 
-        Map<Double, Set<Long>> levels = side == OrderSides.BID.getOrderSide() ? bidsLookup : offersLookup;
+        Map<Double, Set<Long>> levels = side == OrderSides.BID.getOrderSide() ? bidLevels : offerLevels;
         return levels.keySet().stream()
                 .skip(level - 1)
                 .findFirst()
@@ -151,20 +159,17 @@ public class OrderBook {
     public long getTotalSizeByLevelAndSide(int level, char side) {
         validateLevelAndSide(level, side);
 
-        Map<Double, Set<Long>> levels = side == OrderSides.BID.getOrderSide() ? bidsLookup : offersLookup;
-        return levels.values().stream()
+        Map<Double, Long> sizePerLevel = side == OrderSides.BID.getOrderSide() ? bidsSizePerLevel : offersSizePerLevel;
+        return sizePerLevel.values().stream()
                 .skip(level - 1)
                 .findFirst()
-                .stream()
-                .flatMap(Set::stream)
-                .mapToLong(id -> orderBook.get(id).size())
-                .sum();
+                .orElseThrow(() -> new IllegalArgumentException(String.format("Level %s is out of range", level)));
     }
 
     public List<Order> getAllOrdersBySide(char side) {
         validateSide(side);
 
-        Map<Double, Set<Long>> orders = OrderSides.BID.getOrderSide() == side ? bidsLookup : offersLookup;
+        Map<Double, Set<Long>> orders = OrderSides.BID.getOrderSide() == side ? bidLevels : offerLevels;
         return orders.values()
                 .stream()
                 .flatMap(Collection::stream)
@@ -194,8 +199,8 @@ public class OrderBook {
      *
      * @return live view of a bid's lookup
      */
-    public Map<Double, Set<Long>> getBidsLookup() {
-        return Collections.unmodifiableMap(bidsLookup);
+    public Map<Double, Set<Long>> getBidLevels() {
+        return Collections.unmodifiableMap(bidLevels);
     }
 
     /**
@@ -204,7 +209,7 @@ public class OrderBook {
      *
      * @return live view of an order book
      */
-    public Map<Double, Set<Long>> getOffersLookup() {
-        return Collections.unmodifiableMap(offersLookup);
+    public Map<Double, Set<Long>> getOfferLevels() {
+        return Collections.unmodifiableMap(offerLevels);
     }
 }
